@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Coop Simulation Tool</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useMemo } = React;
+    const {
+      LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+      Legend, ResponsiveContainer, ReferenceArea,
+    } = Recharts;
+
+    // ─── Simulation Engine ────────────────────────────────────────────────────
+
+    const DEFAULT_BASELINE = {
+      serviceLevel: 97.5,
+      revenue: 50000,
+      grossMargin: 22.0,
+      cogs: 68.0,
+      logisticsCost: 6.0,
+      waste: 2.5,
+      inventoryDays: 21,
+    };
+
+    const EVENT_TYPES = {
+      strike: {
+        label: 'Strike', color: '#e63946', icon: '⚡',
+        defaultImpacts: { serviceLevelDelta: -12, revenueFactor: 0.82, grossMarginDelta: -2, cogsDelta: 2, logisticsCostDelta: 3, wasteDelta: 1.5, inventoryDaysDelta: -5 },
+      },
+      supplyDisruption: {
+        label: 'Supply Disruption', color: '#f4a261', icon: '🚚',
+        defaultImpacts: { serviceLevelDelta: -8, revenueFactor: 0.92, grossMarginDelta: -1, cogsDelta: 1.5, logisticsCostDelta: 2, wasteDelta: 0.5, inventoryDaysDelta: -6 },
+      },
+      demandShock: {
+        label: 'Demand Shock', color: '#2a9d8f', icon: '📈',
+        defaultImpacts: { serviceLevelDelta: -5, revenueFactor: 1.15, grossMarginDelta: 1, cogsDelta: -0.5, logisticsCostDelta: 0.5, wasteDelta: -0.3, inventoryDaysDelta: -4 },
+      },
+      operationalChange: {
+        label: 'Operational Change', color: '#457b9d', icon: '⚙️',
+        defaultImpacts: { serviceLevelDelta: -3, revenueFactor: 0.98, grossMarginDelta: 0, cogsDelta: 0, logisticsCostDelta: 1, wasteDelta: 0.2, inventoryDaysDelta: 2 },
+      },
+      costEvent: {
+        label: 'Cost Event', color: '#9b2335', icon: '💰',
+        defaultImpacts: { serviceLevelDelta: 0, revenueFactor: 1.0, grossMarginDelta: -3, cogsDelta: 2.5, logisticsCostDelta: 1.5, wasteDelta: 0, inventoryDaysDelta: 0 },
+      },
+    };
+
+    function round(val, decimals) {
+      const f = Math.pow(10, decimals);
+      return Math.round(val * f) / f;
+    }
+
+    function runSimulation(baseline, events, weeks = 52) {
+      const results = [];
+      for (let w = 0; w < weeks; w++) {
+        const active = events.filter(e => w >= e.startWeek - 1 && w < e.startWeek - 1 + e.duration);
+        const revFactor    = active.reduce((acc, e) => acc * (e.impacts.revenueFactor ?? 1), 1);
+        const slDelta      = active.reduce((acc, e) => acc + (e.impacts.serviceLevelDelta  ?? 0), 0);
+        const gmDelta      = active.reduce((acc, e) => acc + (e.impacts.grossMarginDelta   ?? 0), 0);
+        const cogsDelta    = active.reduce((acc, e) => acc + (e.impacts.cogsDelta          ?? 0), 0);
+        const logDelta     = active.reduce((acc, e) => acc + (e.impacts.logisticsCostDelta ?? 0), 0);
+        const wasteDelta   = active.reduce((acc, e) => acc + (e.impacts.wasteDelta         ?? 0), 0);
+        const invDelta     = active.reduce((acc, e) => acc + (e.impacts.inventoryDaysDelta ?? 0), 0);
+
+        const revenue       = Math.max(0, baseline.revenue * revFactor);
+        const serviceLevel  = Math.min(100, Math.max(0, baseline.serviceLevel + slDelta));
+        const grossMargin   = Math.min(100, Math.max(0, baseline.grossMargin  + gmDelta));
+        const cogs          = Math.max(0, baseline.cogs         + cogsDelta);
+        const logisticsCost = Math.max(0, baseline.logisticsCost + logDelta);
+        const waste         = Math.max(0, baseline.waste        + wasteDelta);
+        const inventoryDays = Math.max(0, baseline.inventoryDays + invDelta);
+
+        results.push({
+          week: w + 1,
+          label: `W${w + 1}`,
+          serviceLevel:  round(serviceLevel, 1),
+          revenue:       round(revenue, 0),
+          grossMargin:   round(grossMargin, 1),
+          grossProfit:   round(revenue * grossMargin / 100, 0),
+          cogs:          round(cogs, 1),
+          cogsAbs:       round(revenue * cogs / 100, 0),
+          logisticsCost: round(logisticsCost, 1),
+          logisticsAbs:  round(revenue * logisticsCost / 100, 0),
+          waste:         round(waste, 1),
+          wasteAbs:      round(revenue * waste / 100, 0),
+          inventoryDays: round(inventoryDays, 1),
+        });
+      }
+      return results;
+    }
+
+    function computeSummary(baseline, data) {
+      const weeks = data.length;
+      const baseRev  = baseline.revenue * weeks;
+      const scenRev  = data.reduce((s, w) => s + w.revenue, 0);
+      const baseGP   = baseRev * baseline.grossMargin / 100;
+      const scenGP   = data.reduce((s, w) => s + w.grossProfit, 0);
+      const baseCogs = baseRev * baseline.cogs / 100;
+      const scenCogs = data.reduce((s, w) => s + w.cogsAbs, 0);
+      const baseLog  = baseRev * baseline.logisticsCost / 100;
+      const scenLog  = data.reduce((s, w) => s + w.logisticsAbs, 0);
+      const baseWaste= baseRev * baseline.waste / 100;
+      const scenWaste= data.reduce((s, w) => s + w.wasteAbs, 0);
+      const avgSL    = data.reduce((s, w) => s + w.serviceLevel, 0) / weeks;
+      return {
+        revenueDelta:      round(scenRev  - baseRev,  0),
+        revenuePct:        round((scenRev / baseRev - 1) * 100, 1),
+        grossProfitDelta:  round(scenGP   - baseGP,   0),
+        grossProfitPct:    round((scenGP  / baseGP  - 1) * 100, 1),
+        cogsDelta:         round(scenCogs - baseCogs, 0),
+        logisticsDelta:    round(scenLog  - baseLog,  0),
+        wasteDelta:        round(scenWaste- baseWaste, 0),
+        avgServiceLevel:   round(avgSL, 1),
+        serviceLevelDelta: round(avgSL - baseline.serviceLevel, 1),
+      };
+    }
+
+    // ─── UUID helper ──────────────────────────────────────────────────────────
+
+    function uid() {
+      return crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    }
+
+    // ─── BaselineConfig ───────────────────────────────────────────────────────
+
+    const BASELINE_FIELDS = [
+      { key: 'serviceLevel',  label: 'Service Level',     unit: '%',        min: 0,  max: 100, step: 0.1  },
+      { key: 'revenue',       label: 'Weekly Revenue',    unit: 'DKK 000s', min: 0,  max: 1e9, step: 1000 },
+      { key: 'grossMargin',   label: 'Gross Margin',      unit: '%',        min: 0,  max: 100, step: 0.1  },
+      { key: 'cogs',          label: 'COGS',              unit: '% rev',    min: 0,  max: 100, step: 0.1  },
+      { key: 'logisticsCost', label: 'Logistics Cost',    unit: '% rev',    min: 0,  max: 30,  step: 0.1  },
+      { key: 'waste',         label: 'Waste / Shrinkage', unit: '% rev',    min: 0,  max: 20,  step: 0.1  },
+      { key: 'inventoryDays', label: 'Inventory Days',    unit: 'days',     min: 0,  max: 365, step: 1    },
+    ];
+
+    function BaselineConfig({ baseline, onChange }) {
+      const [open, setOpen] = useState(true);
+      return (
+        <div style={panel}>
+          <div style={{ ...titleStyle, cursor: 'pointer', display: 'flex', justifyContent: 'space-between' }}
+               onClick={() => setOpen(o => !o)}>
+            <span>Baseline KPIs</span>
+            <span style={{ fontWeight: 400, fontSize: 13 }}>{open ? '▲' : '▼'}</span>
+          </div>
+          {open && BASELINE_FIELDS.map(f => (
+            <div key={f.key} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12, gap: 8 }}>
+              <span style={{ fontSize: 13, color: '#555', flex: 1 }}>{f.label}</span>
+              <input
+                type="number"
+                style={{ width: 90, padding: '4px 8px', border: '1px solid #ddd', borderRadius: 6, fontSize: 13, textAlign: 'right', background: '#fafafa' }}
+                value={baseline[f.key]}
+                min={f.min} max={f.max} step={f.step}
+                onChange={e => onChange({ ...baseline, [f.key]: parseFloat(e.target.value) || 0 })}
+              />
+              <span style={{ fontSize: 12, color: '#888', width: 52 }}>{f.unit}</span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ─── EventBuilder ─────────────────────────────────────────────────────────
+
+    const IMPACT_FIELDS = [
+      { key: 'serviceLevelDelta',  label: 'Service Level',  unit: 'pp',   min: -50, max: 50,  step: 0.5,  isMultiplier: false },
+      { key: 'revenueFactor',      label: 'Revenue Factor', unit: '×',    min: 0.5, max: 2.0, step: 0.01, isMultiplier: true  },
+      { key: 'grossMarginDelta',   label: 'Gross Margin',   unit: 'pp',   min: -20, max: 20,  step: 0.5  },
+      { key: 'cogsDelta',          label: 'COGS',           unit: 'pp',   min: -20, max: 20,  step: 0.5  },
+      { key: 'logisticsCostDelta', label: 'Logistics',      unit: 'pp',   min: -10, max: 20,  step: 0.5  },
+      { key: 'wasteDelta',         label: 'Waste',          unit: 'pp',   min: -10, max: 20,  step: 0.5  },
+      { key: 'inventoryDaysDelta', label: 'Inventory Days', unit: 'days', min: -30, max: 30,  step: 1    },
+    ];
+
+    function buildDefaultEvent(type) {
+      return {
+        id: uid(),
+        name: EVENT_TYPES[type].label,
+        type,
+        startWeek: 1,
+        duration: 4,
+        impacts: { ...EVENT_TYPES[type].defaultImpacts },
+      };
+    }
+
+    function EventCard({ event, onUpdate, onRemove }) {
+      const [showImpacts, setShowImpacts] = useState(false);
+      const def = EVENT_TYPES[event.type];
+      const color = def.color;
+      const update = patch => onUpdate({ ...event, ...patch });
+      const updateImpact = (key, val) => onUpdate({ ...event, impacts: { ...event.impacts, [key]: val } });
+
+      return (
+        <div style={{ border: `2px solid ${color}`, borderRadius: 10, padding: 14, marginBottom: 12, background: '#fafafa' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 8 }}>
+            <span style={{ display: 'inline-block', padding: '2px 8px', borderRadius: 12, background: color, color: '#fff', fontSize: 11, fontWeight: 700 }}>
+              {def.icon} {def.label}
+            </span>
+            <input
+              style={{ flex: 1, padding: '4px 8px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, fontWeight: 600 }}
+              value={event.name}
+              onChange={e => update({ name: e.target.value })}
+              placeholder="Event name"
+            />
+            <button style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#e63946', fontWeight: 700, fontSize: 16 }} onClick={onRemove}>×</button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+            {[
+              { label: 'Start Week', key: 'startWeek', min: 1, max: 52 },
+              { label: 'Duration (wks)', key: 'duration', min: 1, max: 52 },
+            ].map(f => (
+              <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5 }}>{f.label}</span>
+                <input
+                  type="number"
+                  style={{ width: 80, padding: '4px 8px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, textAlign: 'right' }}
+                  value={event[f.key]} min={f.min} max={f.max}
+                  onChange={e => update({ [f.key]: Math.max(f.min, parseInt(e.target.value) || f.min) })}
+                />
+              </div>
+            ))}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+              <span style={{ fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5 }}>End Week</span>
+              <span style={{ width: 80, padding: '4px 8px', borderRadius: 6, border: '1px solid #ddd', fontSize: 13, textAlign: 'right', background: '#f0f2f5', display: 'flex', alignItems: 'center', justifyContent: 'flex-end' }}>
+                {event.startWeek + event.duration - 1}
+              </span>
+            </div>
+          </div>
+
+          <span style={{ fontSize: 11, color: '#457b9d', cursor: 'pointer', marginBottom: 6, display: 'inline-block' }}
+                onClick={() => setShowImpacts(v => !v)}>
+            {showImpacts ? '▲ Hide impacts' : '▼ Edit impacts'}
+          </span>
+
+          {showImpacts && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px 12px' }}>
+              {IMPACT_FIELDS.map(f => (
+                <div key={f.key} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 11, color: '#666', flex: 1, minWidth: 90 }}>{f.label}</span>
+                  <input
+                    type="number"
+                    style={{ width: 70, padding: '3px 6px', borderRadius: 5, border: '1px solid #ddd', fontSize: 12, textAlign: 'right' }}
+                    min={f.min} max={f.max} step={f.step}
+                    value={event.impacts[f.key] ?? (f.isMultiplier ? 1 : 0)}
+                    onChange={e => updateImpact(f.key, parseFloat(e.target.value) || 0)}
+                  />
+                  <span style={{ fontSize: 11, color: '#999', width: 30 }}>{f.unit}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function EventBuilder({ events, onChange }) {
+      const [selectedType, setSelectedType] = useState('strike');
+      return (
+        <div style={panel}>
+          <div style={titleStyle}>Events</div>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+            {Object.entries(EVENT_TYPES).map(([key, def]) => (
+              <button
+                key={key}
+                style={{ padding: '6px 12px', borderRadius: 20, border: `2px solid ${def.color}`, background: selectedType === key ? def.color : '#fff', color: selectedType === key ? '#fff' : def.color, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+                onClick={() => setSelectedType(key)}
+              >
+                {def.icon} {def.label}
+              </button>
+            ))}
+          </div>
+          <button
+            style={{ padding: '6px 16px', borderRadius: 20, background: '#1a1a2e', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}
+            onClick={() => onChange([...events, buildDefaultEvent(selectedType)])}
+          >
+            + Add Event
+          </button>
+          <div style={{ marginTop: 16 }}>
+            {events.length === 0 && (
+              <p style={{ color: '#aaa', fontSize: 13, textAlign: 'center', padding: 20 }}>
+                No events yet. Select a type and click "Add Event".
+              </p>
+            )}
+            {events.map(event => (
+              <EventCard
+                key={event.id}
+                event={event}
+                onUpdate={updated => onChange(events.map(e => e.id === event.id ? updated : e))}
+                onRemove={() => onChange(events.filter(e => e.id !== event.id))}
+              />
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    // ─── SummaryCards ─────────────────────────────────────────────────────────
+
+    function fmt(val, decimals = 0) {
+      if (val === undefined || val === null || isNaN(val)) return '—';
+      return val.toLocaleString('da-DK', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+    const sign = val => val >= 0 ? '+' : '';
+
+    function SummaryCards({ summary, weeks }) {
+      if (!summary) return null;
+      const cards = [
+        { label: 'Avg Service Level',          value: `${fmt(summary.avgServiceLevel, 1)}%`,             delta: `${sign(summary.serviceLevelDelta)}${fmt(summary.serviceLevelDelta, 1)} pp vs baseline`, good: summary.serviceLevelDelta >= 0 },
+        { label: `Revenue Impact (${weeks}w)`, value: `${sign(summary.revenueDelta)}${fmt(summary.revenueDelta)} TDKK`,           delta: `${sign(summary.revenuePct)}${fmt(summary.revenuePct, 1)}% vs baseline`,      good: summary.revenueDelta >= 0 },
+        { label: `Gross Profit (${weeks}w)`,   value: `${sign(summary.grossProfitDelta)}${fmt(summary.grossProfitDelta)} TDKK`,   delta: `${sign(summary.grossProfitPct)}${fmt(summary.grossProfitPct, 1)}% vs baseline`, good: summary.grossProfitDelta >= 0 },
+        { label: `Extra COGS (${weeks}w)`,     value: `${sign(summary.cogsDelta)}${fmt(summary.cogsDelta)} TDKK`,                 delta: 'vs baseline', good: summary.cogsDelta <= 0 },
+        { label: `Extra Logistics (${weeks}w)`,value: `${sign(summary.logisticsDelta)}${fmt(summary.logisticsDelta)} TDKK`,       delta: 'vs baseline', good: summary.logisticsDelta <= 0 },
+        { label: `Extra Waste (${weeks}w)`,    value: `${sign(summary.wasteDelta)}${fmt(summary.wasteDelta)} TDKK`,               delta: 'vs baseline', good: summary.wasteDelta <= 0 },
+      ];
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 12 }}>
+          {cards.map(c => (
+            <div key={c.label} style={{ background: '#fff', borderRadius: 10, padding: '14px 16px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)', borderLeft: `4px solid ${c.good === null ? '#ccc' : c.good ? '#2a9d8f' : '#e63946'}` }}>
+              <div style={{ fontSize: 11, color: '#888', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 }}>{c.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: '#1a1a2e' }}>{c.value}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, marginTop: 2, color: c.good ? '#2a9d8f' : '#e63946' }}>{c.delta}</div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ─── EventTimeline ────────────────────────────────────────────────────────
+
+    function EventTimeline({ events, weeks }) {
+      if (events.length === 0) return (
+        <div style={{ ...panel, padding: '16px 12px' }}>
+          <div style={titleStyle}>Event Timeline</div>
+          <div style={{ color: '#aaa', fontSize: 12, textAlign: 'center', padding: 12 }}>Add events to see the timeline</div>
+        </div>
+      );
+      const ticks = [1, Math.round(weeks * 0.25), Math.round(weeks * 0.5), Math.round(weeks * 0.75), weeks];
+      return (
+        <div style={{ ...panel, padding: '16px 12px' }}>
+          <div style={titleStyle}>Event Timeline — {weeks} weeks</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <div style={{ width: 120, flexShrink: 0 }} />
+            <div style={{ flex: 1, position: 'relative', height: 16 }}>
+              {ticks.map(t => (
+                <span key={t} style={{ position: 'absolute', left: `${((t - 1) / (weeks - 1)) * 100}%`, fontSize: 10, color: '#aaa', transform: 'translateX(-50%)' }}>W{t}</span>
+              ))}
+            </div>
+          </div>
+          {events.map(event => {
+            const def = EVENT_TYPES[event.type];
+            const left  = ((event.startWeek - 1) / weeks) * 100;
+            const width = (event.duration / weeks) * 100;
+            return (
+              <div key={event.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <div style={{ fontSize: 12, color: '#555', width: 120, flexShrink: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={event.name}>
+                  {def.icon} {event.name}
+                </div>
+                <div style={{ flex: 1, height: 18, background: '#f0f2f5', borderRadius: 4, position: 'relative' }}>
+                  <div style={{ position: 'absolute', left: `${left}%`, width: `${Math.max(width, 1)}%`, height: '100%', background: def.color, borderRadius: 4, opacity: 0.85 }}
+                       title={`W${event.startWeek}–W${event.startWeek + event.duration - 1}`} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    }
+
+    // ─── KPICharts ────────────────────────────────────────────────────────────
+
+    const CHARTS = [
+      { title: 'Service Level (%)',           keys: [{ key: 'serviceLevel',  label: 'Service Level',  color: '#2a9d8f' }], unit: '%',    baseline: 'serviceLevel'   },
+      { title: 'Weekly Revenue (DKK 000s)',   keys: [{ key: 'revenue',       label: 'Revenue',        color: '#457b9d' }], unit: 'TDKK', baseline: 'revenue'        },
+      { title: 'Gross Margin (%)',            keys: [{ key: 'grossMargin',   label: 'Gross Margin %', color: '#e9c46a' }], unit: '%',    baseline: 'grossMargin'    },
+      { title: 'Cost Breakdown (% of revenue)', keys: [
+          { key: 'cogs',          label: 'COGS',      color: '#e63946' },
+          { key: 'logisticsCost', label: 'Logistics', color: '#f4a261' },
+          { key: 'waste',         label: 'Waste',     color: '#9b2335' },
+        ], unit: '%', baseline: null },
+      { title: 'Inventory Days',             keys: [{ key: 'inventoryDays', label: 'Inventory Days', color: '#6a4c93' }], unit: 'days', baseline: 'inventoryDays'  },
+      { title: 'Gross Profit (DKK 000s)',    keys: [{ key: 'grossProfit',   label: 'Gross Profit',   color: '#2a9d8f' }], unit: 'TDKK', baseline: null             },
+    ];
+
+    function KPICharts({ data, baseline, events, weeks }) {
+      if (!data || data.length === 0) return null;
+      const bands = events.map(e => ({
+        x1: `W${e.startWeek}`,
+        x2: `W${Math.min(e.startWeek + e.duration - 1, weeks)}`,
+        color: EVENT_TYPES[e.type]?.color ?? '#ccc',
+        name: e.name,
+      }));
+      const merged = data.map(w => {
+        const obj = { ...w };
+        CHARTS.forEach(c => { if (c.baseline) obj[`${c.baseline}_base`] = baseline[c.baseline]; });
+        return obj;
+      });
+      return (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 16 }}>
+          {CHARTS.map(chart => (
+            <div key={chart.title} style={{ background: '#fff', borderRadius: 10, padding: '16px 12px', boxShadow: '0 1px 4px rgba(0,0,0,0.08)' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#1a1a2e', marginBottom: 10 }}>{chart.title}</div>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={merged} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={weeks > 26 ? 3 : 1} />
+                  <YAxis tick={{ fontSize: 10 }} tickFormatter={v => Math.abs(v) >= 1000 ? `${(v/1000).toFixed(0)}k` : v} width={42} />
+                  <Tooltip
+                    formatter={(val, name) => [`${val.toLocaleString('da-DK')} ${chart.unit}`, name]}
+                    labelFormatter={l => `Week ${String(l).replace('W', '')}`}
+                    contentStyle={{ fontSize: 12, borderRadius: 8 }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  {bands.map((band, i) => (
+                    <ReferenceArea key={i} x1={band.x1} x2={band.x2} fill={band.color} fillOpacity={0.12} />
+                  ))}
+                  {chart.baseline && (
+                    <Line type="monotone" dataKey={`${chart.baseline}_base`} name="Baseline" stroke="#ccc" strokeDasharray="4 4" dot={false} strokeWidth={1.5} />
+                  )}
+                  {chart.keys.map(k => (
+                    <Line key={k.key} type="monotone" dataKey={k.key} name={k.label} stroke={k.color} dot={false} strokeWidth={2} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // ─── Shared styles ────────────────────────────────────────────────────────
+
+    const panel = {
+      background: '#fff', borderRadius: 12, padding: 20,
+      boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
+    };
+    const titleStyle = {
+      fontSize: 14, fontWeight: 700, color: '#1a1a2e', marginBottom: 16,
+      textTransform: 'uppercase', letterSpacing: 1,
+    };
+
+    // ─── App ──────────────────────────────────────────────────────────────────
+
+    const WEEK_OPTIONS = [13, 26, 52];
+
+    function App() {
+      const [baseline, setBaseline] = useState(DEFAULT_BASELINE);
+      const [events,   setEvents]   = useState([]);
+      const [weeks,    setWeeks]    = useState(26);
+
+      const simData = useMemo(() => runSimulation(baseline, events, weeks), [baseline, events, weeks]);
+      const summary = useMemo(() => computeSummary(baseline, simData),      [baseline, simData]);
+
+      return (
+        <div style={{ minHeight: '100vh', background: '#f0f2f5' }}>
+          <header style={{ background: '#1a1a2e', color: '#fff', padding: '16px 32px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 800, letterSpacing: 0.5 }}>Coop Simulation Tool</div>
+              <div style={{ fontSize: 12, color: '#aab' }}>Model how events impact Service Level, Revenue, Margin &amp; Cost</div>
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {WEEK_OPTIONS.map(w => (
+                <button key={w}
+                  style={{ padding: '5px 12px', borderRadius: 16, border: '2px solid #fff', background: weeks === w ? '#fff' : 'transparent', color: weeks === w ? '#1a1a2e' : '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
+                  onClick={() => setWeeks(w)}>{w}W</button>
+              ))}
+            </div>
+          </header>
+
+          <div style={{ display: 'flex', gap: 20, padding: 24, maxWidth: 1600, margin: '0 auto' }}>
+            <aside style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <BaselineConfig baseline={baseline} onChange={setBaseline} />
+              <EventBuilder events={events} onChange={setEvents} />
+            </aside>
+
+            <main style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>Scenario Impact Summary</div>
+                <SummaryCards summary={summary} weeks={weeks} />
+              </div>
+              <EventTimeline events={events} weeks={weeks} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#555', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>KPI Charts — Scenario vs Baseline</div>
+                <KPICharts data={simData} baseline={baseline} events={events} weeks={weeks} />
+              </div>
+            </main>
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
