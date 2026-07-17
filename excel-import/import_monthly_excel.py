@@ -39,7 +39,19 @@ log = logging.getLogger(__name__)
 
 def load_config() -> dict:
     with open(CONFIG_PATH, encoding="utf-8") as f:
-        config = json.load(f)
+        try:
+            config = json.load(f)
+        except json.JSONDecodeError as e:
+            log.error(
+                "config.json is not valid JSON (line %d, column %d): %s\n"
+                "Common causes:\n"
+                "  - Windows paths must use double backslashes (\"C:\\\\Users\\\\...\") "
+                "or forward slashes (\"C:/Users/...\")\n"
+                "  - A missing comma at the end of the previous line\n"
+                "  - A missing quote around a value",
+                e.lineno, e.colno, e.msg,
+            )
+            sys.exit(1)
     if "PUT PART OF THE EMAIL SUBJECT" in config["email_subject_contains"]:
         log.error("Please edit config.json first: set 'email_subject_contains' "
                   "to (part of) the subject of the monthly email.")
