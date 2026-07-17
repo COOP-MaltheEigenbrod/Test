@@ -84,7 +84,23 @@ def save_processed_ids(ids: set) -> None:
 
 def get_outlook_folder(config: dict):
     outlook = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
-    inbox = outlook.GetDefaultFolder(6)  # 6 = olFolderInbox
+
+    mailbox = (config.get("outlook_mailbox") or "").strip()
+    if mailbox:
+        store = None
+        for s in outlook.Stores:
+            if mailbox.lower() in s.DisplayName.lower():
+                store = s
+                break
+        if store is None:
+            available = "\n  - ".join(s.DisplayName for s in outlook.Stores)
+            log.error("Could not find mailbox %r in Outlook. Mailboxes available "
+                      "in your Outlook are:\n  - %s", mailbox, available)
+            sys.exit(1)
+        inbox = store.GetDefaultFolder(6)  # 6 = olFolderInbox
+    else:
+        inbox = outlook.GetDefaultFolder(6)
+
     folder_name = config.get("outlook_folder", "Inbox")
     if folder_name.lower() in ("", "inbox"):
         return inbox

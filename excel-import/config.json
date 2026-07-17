@@ -1,5 +1,6 @@
 {
   "email_subject_contains": "PUT PART OF THE EMAIL SUBJECT HERE",
+  "outlook_mailbox": "",
   "outlook_folder": "Inbox",
   "search_days_back": 40,
 

@@ -28,6 +28,7 @@ IT approvals needed, because it reads the mail through Outlook itself.
    | Setting | What to put there |
    |---|---|
    | `email_subject_contains` | Part of the subject of the monthly email, e.g. `"Monthly sales report"`. Not case-sensitive. |
+   | `outlook_mailbox` | Which mailbox to search. Leave `""` for your own default mailbox. If the email arrives in a shared or secondary mailbox shown in Outlook's folder list (e.g. `"nicolaj.albion@coop.dk"`), put its name here. If the name doesn't match, the script lists the mailboxes it can see. |
    | `outlook_folder` | Where the email lands. `"Inbox"`, or the name of another folder — the script looks both inside the Inbox and at the top level of your mailbox (folders next to the Inbox), so just the folder's name is enough, e.g. `"Monthly reports"`. Use `/` for nested folders, e.g. `"Reports/Monthly"`. If the name is wrong, the script lists your folders so you can pick the right one. |
    | `search_days_back` | How many days back to look for the email. 40 is fine for a monthly email. |
    | `master_excel_path` | Full path to the Excel file the data should be added to. It is created automatically if it doesn't exist yet. |
