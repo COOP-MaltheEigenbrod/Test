@@ -39,19 +39,30 @@ log = logging.getLogger(__name__)
 
 def load_config() -> dict:
     with open(CONFIG_PATH, encoding="utf-8") as f:
-        try:
-            config = json.load(f)
-        except json.JSONDecodeError as e:
-            log.error(
-                "config.json is not valid JSON (line %d, column %d): %s\n"
-                "Common causes:\n"
-                "  - Windows paths must use double backslashes (\"C:\\\\Users\\\\...\") "
-                "or forward slashes (\"C:/Users/...\")\n"
-                "  - A missing comma at the end of the previous line\n"
-                "  - A missing quote around a value",
-                e.lineno, e.colno, e.msg,
-            )
-            sys.exit(1)
+        text = f.read()
+    try:
+        config = json.loads(text)
+    except json.JSONDecodeError as e:
+        lines = text.splitlines()
+        bad_line = lines[e.lineno - 1] if 0 < e.lineno <= len(lines) else ""
+        pointer = " " * (e.colno - 1) + "^"
+        log.error(
+            "The config file this script is reading is not valid JSON.\n"
+            "  File:  %s\n"
+            "  Error: %s (line %d, column %d)\n"
+            "  Line %d reads:\n"
+            "    %s\n"
+            "    %s\n"
+            "Common causes:\n"
+            "  - Windows paths: use forward slashes (\"C:/Users/...\") or double "
+            "backslashes (\"C:\\\\Users\\\\...\") - single backslashes break JSON\n"
+            "  - A missing comma at the end of the previous line\n"
+            "  - A missing quote around a value\n"
+            "If this line is not what you typed, you are editing a different file "
+            "than the one shown above (check for a hidden .txt extension).",
+            CONFIG_PATH, e.msg, e.lineno, e.colno, e.lineno, bad_line, pointer,
+        )
+        sys.exit(1)
     if "PUT PART OF THE EMAIL SUBJECT" in config["email_subject_contains"]:
         log.error("Please edit config.json first: set 'email_subject_contains' "
                   "to (part of) the subject of the monthly email.")
