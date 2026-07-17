@@ -65,11 +65,29 @@ def get_outlook_folder(config: dict):
     folder_name = config.get("outlook_folder", "Inbox")
     if folder_name.lower() in ("", "inbox"):
         return inbox
-    # A subfolder of the inbox, e.g. "Reports" or "Reports/Monthly"
-    folder = inbox
-    for part in folder_name.replace("\\", "/").split("/"):
-        folder = folder.Folders(part)
-    return folder
+
+    parts = [p for p in folder_name.replace("\\", "/").split("/") if p]
+
+    def resolve(start):
+        folder = start
+        for part in parts:
+            folder = folder.Folders(part)
+        return folder
+
+    # Try the path as a subfolder of the Inbox first, then from the top level
+    # of the mailbox (folders that sit next to the Inbox, e.g. ones an Outlook
+    # rule moves mail into).
+    for start in (inbox, inbox.Parent):
+        try:
+            return resolve(start)
+        except Exception:
+            continue
+
+    available = ", ".join(f.Name for f in inbox.Parent.Folders)
+    log.error("Could not find Outlook folder %r. Top-level folders in your "
+              "mailbox are: %s. For a nested folder use '/' between names, "
+              "e.g. \"Reports/Monthly\".", folder_name, available)
+    sys.exit(1)
 
 
 def find_matching_emails(folder, config: dict, processed_ids: set) -> list:
