@@ -135,14 +135,28 @@ def find_matching_emails(folder, config: dict, processed_ids: set) -> list:
     days_back = int(config.get("search_days_back", 40))
     cutoff = datetime.now() - timedelta(days=days_back)
 
+    log.info("Searching folder %s (%d items in total) for subjects "
+             "containing %r ...", folder.FolderPath, folder.Items.Count, subject_text)
+
     items = folder.Items
     items.Sort("[ReceivedTime]", True)  # newest first
-    items = items.Restrict(
-        "[ReceivedTime] >= '" + cutoff.strftime("%m/%d/%Y %I:%M %p") + "'"
-    )
 
+    # Walk newest-to-oldest and stop at the cutoff date. The date comparison is
+    # done here in Python rather than with an Outlook Restrict filter, because
+    # Restrict needs a date string whose interpretation depends on the Windows
+    # display language (day/month vs month/day) and can silently drop emails.
     matches = []
+    scanned = 0
     for item in items:
+        try:
+            received = item.ReceivedTime
+            received = datetime(received.year, received.month, received.day,
+                                received.hour, received.minute, received.second)
+        except Exception:  # some items (meeting invites etc.) lack properties
+            continue
+        if received < cutoff:
+            break  # sorted newest first, so everything from here on is older
+        scanned += 1
         try:
             if item.Class != 43:  # 43 = olMail
                 continue
@@ -153,8 +167,10 @@ def find_matching_emails(folder, config: dict, processed_ids: set) -> list:
                          item.Subject, item.ReceivedTime)
                 continue
             matches.append(item)
-        except Exception:  # some items (meeting invites etc.) lack properties
+        except Exception:
             continue
+    log.info("Scanned %d emails from the last %d days, found %d new match(es).",
+             scanned, days_back, len(matches))
     matches.reverse()  # oldest first, so data lands in chronological order
     return matches
 
