@@ -1,0 +1,15 @@
+{
+  "email_subject_contains": "PUT PART OF THE EMAIL SUBJECT HERE",
+  "outlook_folder": "Inbox",
+  "search_days_back": 40,
+
+  "master_excel_path": "C:\\Users\\YOURNAME\\Documents\\master.xlsx",
+  "master_sheet_name": "Data",
+
+  "attachment_sheet_name": "",
+  "attachment_header_rows": 1,
+
+  "add_source_columns": true,
+
+  "attachment_save_folder": "C:\\Users\\YOURNAME\\Documents\\ExcelImport\\attachments"
+}
