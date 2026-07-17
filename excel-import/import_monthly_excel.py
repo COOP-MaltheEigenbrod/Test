@@ -241,7 +241,11 @@ def append_to_master(rows: list, mail, config: dict) -> None:
     log.info("Appended %d rows to %s (sheet '%s')", len(rows), master_path, sheet_name)
 
 
+SCRIPT_VERSION = "v6 (2026-07-17)"
+
+
 def main() -> None:
+    log.info("Import script %s running from %s", SCRIPT_VERSION, __file__)
     config = load_config()
     processed_ids = load_processed_ids()
 
